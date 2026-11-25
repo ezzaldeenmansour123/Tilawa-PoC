@@ -55,15 +55,15 @@ MODELS = {
     },
 }
 ORT_VERSION = "1.30.0"  # must match web/package.json + lib/model_manager.dart
-# onnxruntime-web WASM files needed by the bundle (exact set is listed by
-# the onnxruntime-web package; the well-known core set is downloaded here
-# and the build fails loudly at runtime if one is missing — the CI smoke
-# test catches that before any APK is built).
+# onnxruntime-web files needed by the bundle. VERIFIED 2026-11-25 against
+# the live jsDelivr listing: 1.30.0 (and every version back to 1.19.0)
+# ships ONLY simd-threaded builds — ort-wasm-simd.wasm / ort-wasm.wasm
+# do NOT exist, and the old 4-file list 404'd on the phone (poc-9).
+# The .mjs is the Emscripten loader glue the runtime fetches from
+# wasmPaths alongside the .wasm. Keep in sync with lib/model_manager.dart.
 ORT_WASM_FILES = [
+    "ort-wasm-simd-threaded.mjs",
     "ort-wasm-simd-threaded.wasm",
-    "ort-wasm-simd.wasm",
-    "ort-wasm-threaded.wasm",
-    "ort-wasm.wasm",
 ]
 
 
@@ -198,9 +198,12 @@ def main() -> int:
         try:
             download(url, target)
             print(f"OK {target} ({target.stat().st_size} bytes)")
-        except Exception as exc:  # noqa: BLE001 - report and continue
-            print(f"WARN: could not download {name}: {exc} "
-                  "(CI smoke test will catch a missing WASM file)")
+        except Exception as exc:  # noqa: BLE001 - fail the build loudly
+            # A missing WASM file MUST fail CI: the old WARN-only behaviour
+            # let the poc-9 404 (ort-wasm-simd.wasm does not exist in
+            # onnxruntime-web 1.30.0) slip through to the user's phone.
+            print(f"ERROR: could not download {name}: {exc}")
+            return 1
     return 0
 
 
