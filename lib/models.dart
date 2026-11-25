@@ -25,8 +25,11 @@ class RefWord {
   String toString() => '$surah:$ayah:$word';
 
   @override
-  bool operator ==(Object o) =>
-      o is RefWord && o.surah == surah && o.ayah == ayah && o.word == word;
+  bool operator ==(Object other) =>
+      other is RefWord &&
+      other.surah == surah &&
+      other.ayah == ayah &&
+      other.word == word;
 
   @override
   int get hashCode => Object.hash(surah, ayah, word);
