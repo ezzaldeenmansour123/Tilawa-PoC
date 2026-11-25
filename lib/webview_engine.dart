@@ -507,9 +507,9 @@ class WebViewEngine implements SpeechEngine {
         // bridge-side context was lost, and a stale bundle whose error
         // carries no context at all — in that case the summary says the
         // probe never arrived, which is itself the diagnosis).
+        final rawMessage = (data['message'] ?? 'خطأ من المحرك') as String;
         final err = SpeechEngineException(
-          (data['message'] ?? 'خطأ من المحرك') as String +
-              _envProbeSummary(),
+          rawMessage + _envProbeSummary(),
           reason: data['reason'] as String?,
         );
         _failLoad(err);
