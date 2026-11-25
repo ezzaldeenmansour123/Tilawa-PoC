@@ -216,8 +216,7 @@ void main() {
 
     test('SessionResult JSON round-trip preserves the numbers', () {
       final r = _sampleResult();
-      final back = SessionResult.fromJson(
-          r.toJson() as Map<String, dynamic>);
+      final back = SessionResult.fromJson(r.toJson());
       expect(back.matchedWords, r.matchedWords);
       expect(back.totalWords, r.totalWords);
       expect(back.matchPercent, r.matchPercent);
