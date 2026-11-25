@@ -86,30 +86,47 @@ const kReferenceSha256 =
 /// mirror of the onnxruntime-web npm package — never from tilawa.dev at
 /// runtime (the PoC must not depend on tilawa.dev after first install).
 ///
-/// VERIFIED 2026-11-25 against the live jsDelivr listing: onnxruntime-web
-/// 1.30.0 (and every version back to 1.19.0) ships ONLY simd-threaded
-/// builds — there is NO ort-wasm-simd.wasm / ort-wasm.wasm any more, so the
-/// old 4-file list 404'd on the phone (poc-9). The threaded build needs
-/// SharedArrayBuffer, which needs cross-origin isolation — LocalServer
-/// therefore sends COOP: same-origin + COEP: require-corp on every
-/// response (see lib/local_server.dart). If the WebView still reports
-/// crossOriginIsolated == false, the engine cannot load and the PoC must
-/// record that as a NO-GO data point (do NOT silently fall back).
-/// The .mjs is the Emscripten loader glue the runtime fetches from
-/// wasmPaths alongside the .wasm; both files are required.
+/// VERIFIED 2026-11-26 against the jsDelivr source itself
+/// (https://cdn.jsdelivr.net/npm/onnxruntime-web@1.30.0/dist/): the 1.30.0
+/// "all" build loads ONLY the JSEP pair — `ort-wasm-simd-threaded.jsep.mjs`
+/// + `ort-wasm-simd-threaded.jsep.wasm` — and NEVER requests the non-JSEP
+/// pair (`ort-wasm-simd-threaded.mjs` / `.wasm`, 0 occurrences in
+/// assets/web/bundle.js). The filename is hardcoded in
+/// onnxruntime-web/lib/wasm/wasm-utils-import.ts:284 and resolved against
+/// the `wasmPaths` prefix the bridge passes. The non-JSEP pair was
+/// downloaded, SHA-verified, pre-flighted and served for poc-9…pro-build-28
+/// while the loader 404'd on the JSEP pair — every gate passed and the
+/// phone still failed. The JSEP pair therefore REPLACES the non-JSEP pair
+/// here (not "in addition to"): keeping the old pair would download
+/// ~14.3 MB the loader never asks for.
+///
+/// The threaded build needs SharedArrayBuffer, which needs cross-origin
+/// isolation — LocalServer therefore sends COOP: same-origin + COEP:
+/// require-corp on every response (see lib/local_server.dart). BUT the
+/// single-thread path is NOT a different file: 1.30.0 ships ONLY threaded
+/// builds (no ort-wasm-simd.wasm / ort-wasm.wasm exist), and when the
+/// page is NOT cross-origin isolated @tilawa/core forces numThreads = 1
+/// (dist/runtime/web.js:37) and onnxruntime-web falls back to
+/// single-threading with a warning (lib/wasm/wasm-factory.ts:131-149) —
+/// the SAME JSEP files run with threads = 1. See
+/// ~/workspace/tilawa/JSEP_WASM_POC_IMPLEMENTATION_2026-11-26.md §2.
 /// Same 2 files as tools/download_assets.py ORT_WASM_FILES — keep both
 /// lists in sync.
 const kOrtWebVersion = '1.30.0';
 const kOrtWasmFiles = [
-  'ort-wasm-simd-threaded.mjs',
-  'ort-wasm-simd-threaded.wasm',
+  'ort-wasm-simd-threaded.jsep.mjs',
+  'ort-wasm-simd-threaded.jsep.wasm',
 ];
 const kOrtBaseUrl =
     'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.30.0/dist';
 
-/// Pinned WASM identity (2026-11-26, ported from Pro): exact bytes +
-/// SHA-256 of the files downloaded 2026-11-25 from the jsDelivr URLs
-/// above. The PoC used to verify WASM only as present + non-empty, so a
+/// Pinned WASM identity (2026-11-26): exact bytes + SHA-256 of the JSEP
+/// files downloaded from the jsDelivr source itself
+/// (https://cdn.jsdelivr.net/npm/onnxruntime-web@1.30.0/dist/) and verified
+/// byte-identical against the vendored copy in
+/// web/node_modules/onnxruntime-web/dist/ (see
+/// ~/workspace/tilawa/JSEP_WASM_POC_IMPLEMENTATION_2026-11-26.md §3).
+/// The PoC used to verify WASM only as present + non-empty, so a
 /// truncated or corrupt runtime could pass status() and fail only inside
 /// loadWebModel. Verified by size at download time and by
 /// ortWasmReady(), and by size + SHA in status().
@@ -126,16 +143,16 @@ class OrtWasmAsset {
 
 const kOrtWasmAssets = [
   OrtWasmAsset(
-    name: 'ort-wasm-simd-threaded.mjs',
-    bytes: 24381,
+    name: 'ort-wasm-simd-threaded.jsep.mjs',
+    bytes: 46851,
     sha256:
-        'e13f7f94fc51b4ca72b12faeb1ee95f4ace6dfbc8939bc718aabdc0a27c4299b',
+        '709853412fd1ffc34247af1e73569227b5b79629c5ca3f59cc39cf7e500e4947',
   ),
   OrtWasmAsset(
-    name: 'ort-wasm-simd-threaded.wasm',
-    bytes: 14239897,
+    name: 'ort-wasm-simd-threaded.jsep.wasm',
+    bytes: 28312028,
     sha256:
-        '3398c10d07d229bd91b364548e130e0e51a8e5704b88c7c083ebbeb78842dee2',
+        '3ad23231b5bd6d9dda55a7f84606315e0bf35b6750c28ee993c987c54cacab0f',
   ),
 ];
 
