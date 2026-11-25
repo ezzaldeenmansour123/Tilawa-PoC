@@ -1,0 +1,33 @@
+name: tilawa_poc
+description: "Tilawa PoC — offline Quran recitation follower (yazinsai/tilawa WebView experiment). Standalone experiment, NOT the Tilawa app."
+publish_to: "none"
+version: 0.1.0+1
+
+environment:
+  sdk: ">=3.3.0 <4.0.0"
+  flutter: ">=3.22.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  # WebView hosting @tilawa/core/web. Version range is deliberately broad:
+  # CI resolves the latest 4.x; pin it in pubspec.lock at first green build.
+  webview_flutter: ^4.0.0
+  path_provider: ^2.1.5
+  crypto: ^3.0.6
+  share_plus: ^10.1.4
+  permission_handler: ^11.0.0
+  http: ^1.6.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/web/tilawa.html
+    - assets/web/bundle.js
+    # Model + reference are downloaded at build time by tools/download_assets.py
+    # (NOT committed): assets/models/model-lite.onnx, model-full.onnx, ref-v2.json
