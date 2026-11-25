@@ -53,6 +53,20 @@ class WebViewEngine implements SpeechEngine {
   @override
   EngineCapabilities? get capabilities => _capabilities;
 
+  /// True once a model has loaded successfully in this engine instance.
+  bool get isLoaded => _capabilities != null && _controller != null;
+
+  /// The tier of the currently loaded model, or null before load().
+  String? get loadedTier => _tier;
+
+  /// Number of ayahs in [surah] (Hafs), derived from the loaded reference
+  /// itself (ref-v2.json), or null before load(). The setup screen uses
+  /// surah_names.dart for picking a passage *before* load; this is the
+  /// cross-check from the engine's own reference afterwards.
+  int? ayahCount(int surah) => _ayahCounts?[surah];
+
+  Map<int, int>? _ayahCounts;
+
   @override
   Future<EngineCapabilities> load({
     required String tier,
@@ -86,6 +100,13 @@ class WebViewEngine implements SpeechEngine {
         '${(a as Map)['s']}:${a['a']}':
             ((a['w'] as List).cast<String>()),
     };
+    // Ayah counts per surah, derived from the same reference.
+    final counts = <int, int>{};
+    for (final key in _referenceWords!.keys) {
+      final surah = int.parse(key.split(':').first);
+      counts[surah] = (counts[surah] ?? 0) + 1;
+    }
+    _ayahCounts = counts;
 
     _server ??= await LocalServer.start(
       Directory(modelManager.referenceFile.parent.path),
@@ -227,6 +248,12 @@ class WebViewEngine implements SpeechEngine {
     if (_controller == null || _capabilities == null) {
       throw SpeechEngineException('حمّل النموذج أولاً (load قبل startSession)');
     }
+    // Never run two recording sessions at once: the bridge holds a single
+    // `session`/`mic`, so a second start would silently hijack the first.
+    if (_listening) {
+      throw SpeechEngineException(
+          'جلسة تسجيل أخرى تعمل بالفعل — أنهِها أو أوقفها أولاً');
+    }
     if (mode == SessionMode.memorization && passage == null) {
       throw ArgumentError('memorization requires a passage');
     }
@@ -260,11 +287,45 @@ class WebViewEngine implements SpeechEngine {
 
   @override
   Future<void> endSession() async {
+    if (_listening) {
+      _listening = false;
+      await _controller?.runJavaScript('window.TilawaPoc.stopSession();');
+    }
+    // Always close the log, even when called after a pause (where
+    // endSegment already stopped the mic but deliberately kept the log
+    // open). Otherwise a paused-then-abandoned session would leave its
+    // log file without a 'session-ended' line.
+    await _log?.append('meta', {'event': 'session-ended'}, audioMs: null);
+    _log = null;
+  }
+
+  /// Ends ONE recording segment (pause) WITHOUT closing the session log.
+  ///
+  /// Pause/resume truthfulness: the engine has no "pause" — a session is
+  /// a take. Pausing therefore stops the mic and ends the engine session
+  /// (bridge stopSession), and resuming starts a NEW engine session on
+  /// the same passage (startSession). The log stays open across segments,
+  /// each segment boundary is recorded as a meta line, and the UI's
+  /// WordTracker de-duplicates matched words across segments, so a word
+  /// re-observed after resume is never counted twice. What the engine
+  /// cannot do — and this code never pretends otherwise — is resume
+  /// mid-ayah tracking: a resumed segment re-tracks from the passage
+  /// start and re-locks when the user recites.
+  Future<void> endSegment({required int segment}) async {
     if (!_listening) return;
     _listening = false;
     await _controller?.runJavaScript('window.TilawaPoc.stopSession();');
-    await _log?.append('meta', {'event': 'session-ended'}, audioMs: null);
-    _log = null;
+    await _log?.append(
+      'meta',
+      {'event': 'segment-ended', 'segment': segment},
+      audioMs: null,
+    );
+  }
+
+  /// Appends a `meta` line to the open session log, if any. Used by the
+  /// session screen for segment boundaries and pause/resume markers.
+  Future<void> appendLogMeta(Map<String, dynamic> meta) async {
+    await _log?.append('meta', meta, audioMs: null);
   }
 
   @override

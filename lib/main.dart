@@ -6,6 +6,7 @@
 import 'package:material_ui/material_ui.dart';
 
 import 'model_manager.dart';
+import 'progress_store.dart';
 import 'screens/logs_screen.dart';
 import 'screens/model_screen.dart';
 import 'screens/recitation_screen.dart';
@@ -22,14 +23,16 @@ class TilawaPocApp extends StatefulWidget {
 }
 
 class _TilawaPocAppState extends State<TilawaPocApp> {
-  late final Future<(ModelManager, WebViewEngine)> _ready;
+  late final Future<(ModelManager, WebViewEngine, ProgressStore)> _ready;
   int _tab = 0;
+  bool _dark = false;
 
   @override
   void initState() {
     super.initState();
     _ready = ModelManager.create().then(
-      (m) => (m, WebViewEngine(modelManager: m)),
+      (m) async =>
+          (m, WebViewEngine(modelManager: m), await ProgressStore.create()),
     );
   }
 
@@ -42,7 +45,15 @@ class _TilawaPocAppState extends State<TilawaPocApp> {
         useMaterial3: true,
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.teal),
       ),
-      home: FutureBuilder<(ModelManager, WebViewEngine)>(
+      darkTheme: ThemeData(
+        useMaterial3: true,
+        colorScheme: ColorScheme.fromSeed(
+          seedColor: Colors.teal,
+          brightness: Brightness.dark,
+        ),
+      ),
+      themeMode: _dark ? ThemeMode.dark : ThemeMode.light,
+      home: FutureBuilder<(ModelManager, WebViewEngine, ProgressStore)>(
         future: _ready,
         builder: (context, snap) {
           if (!snap.hasData) {
@@ -50,15 +61,22 @@ class _TilawaPocAppState extends State<TilawaPocApp> {
               body: Center(child: CircularProgressIndicator()),
             );
           }
-          final (manager, engine) = snap.data!;
+          final (manager, engine, progressStore) = snap.data!;
           final pages = [
-            RecitationScreen(engine: engine),
+            RecitationScreen(engine: engine, progressStore: progressStore),
             ModelScreen(manager: manager, engine: engine),
             const LogsScreen(),
           ];
           return Scaffold(
             appBar: AppBar(
               title: const Text('التسميع الذكي — PoC تجريبي'),
+              actions: [
+                IconButton(
+                  icon: Icon(_dark ? Icons.light_mode : Icons.dark_mode),
+                  tooltip: _dark ? 'الوضع النهاري' : 'الوضع الليلي',
+                  onPressed: () => setState(() => _dark = !_dark),
+                ),
+              ],
             ),
             body: Column(
               children: [
