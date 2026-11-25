@@ -149,7 +149,15 @@ class _RecitationScreenState extends State<RecitationScreen> {
           setState(() => _loadingLabel = 'جارٍ تحميل النموذج…');
         }
         final t0 = DateTime.now();
-        await widget.engine.load(tier: _tier);
+        // onStage mirrors the engine's progress step by step, so a hang
+        // is visible (which stage it stuck on) instead of a blind wait
+        // — the poc-12 phone failure waited 120 s with no clue.
+        await widget.engine.load(
+          tier: _tier,
+          onStage: (label) {
+            if (mounted) setState(() => _loadingLabel = label);
+          },
+        );
         loadMs = DateTime.now().difference(t0).inMilliseconds;
         if (mounted) setState(() => _lastLoadMs = loadMs);
       } else {
@@ -324,7 +332,11 @@ class _RecitationScreenState extends State<RecitationScreen> {
                   ? 'محمَّل (${widget.engine.loadedTier})'
                   : 'غير محمَّل بعد — يُحمَّل عند بدء التسميع',
               ok: _engineReady,
-              unknown: false,
+              // Neutral grey (not red) before the first load: not loaded
+              // yet is the normal state here, not a failure (Phase 2,
+              // item 2.3). _checkRow shows the grey help icon when
+              // unknown is true.
+              unknown: !_engineReady,
             ),
             _checkRow(
               title: 'الميكروفون',
