@@ -51,12 +51,17 @@ jobs:
       - name: Install engine + runtime
         run: |
           cd web
-          # `npm install`, not `npm ci`: there is no package-lock.json yet
-          # (no Node toolchain was available when the PoC was scaffolded).
-          # The first green build MUST commit the generated lock file.
-          npm install
+          # `npm ci`, not `npm install`: web/package-lock.json pins every
+          # dependency (generated 2026-11-25, Phase 2 item 2.4), so CI
+          # installs exactly the versions tested locally.
+          npm ci
           npm run build
           test -s ../assets/web/bundle.js
+          # Actually EVALUATE the bundle in Node (web/smoke-bundle.mjs):
+          # `test -s` only proves the file is non-empty — a bundle that
+          # throws during evaluation dies before defining window.TilawaPoc
+          # (the poc-14 failure mode) and would still pass `test -s`.
+          node smoke-bundle.mjs
       - name: Node smoke test (load model, silence session)
         run: |
           node --input-type=module -e "
@@ -107,8 +112,14 @@ jobs:
       - name: Build web bundle
         run: |
           cd web
-          npm install
+          # `npm ci` (pinned by web/package-lock.json, Phase 2 item 2.4).
+          npm ci
           npm run build
+          # `test -s` HERE in the build job itself (not only in node-smoke
+          # on another runner): a missing/empty bundle must fail this job.
+          test -s ../assets/web/bundle.js
+          # Evaluate the bundle for real — see node-smoke above.
+          node smoke-bundle.mjs
           ls -lh ../assets/web/bundle.js
 
       - name: Download model assets (SHA-verified)
@@ -150,6 +161,27 @@ jobs:
 
       - name: Build release APK (arm64 only, for the test phone)
         run: flutter build apk --release --split-per-abi
+
+      # The bundle was built and smoke-tested above, but that proves only
+      # that it exists on the runner — not that Flutter packaged it into
+      # the APK. A missing asset here is exactly the poc-14 failure mode
+      # (HTTP 500 from the local server, no bridge in the page).
+      - name: Verify bundle.js inside APK (fail if missing or tiny)
+        run: |
+          apk=build/app/outputs/flutter-apk/app-arm64-v8a-release.apk
+          entry=$(unzip -l "$apk" | grep 'assets/flutter_assets/assets/web/bundle.js' || true)
+          if [ -z "$entry" ]; then
+            echo "ERROR: assets/flutter_assets/assets/web/bundle.js is NOT inside $apk — the local server would serve nothing and WebView init would fail (poc-14)."
+            unzip -l "$apk" | grep 'assets/web/' || echo '(no assets/web/ entries in APK at all)'
+            exit 1
+          fi
+          size=$(echo "$entry" | awk '{print $1}')
+          echo "bundle.js inside APK: $size bytes (uncompressed)"
+          if [ "$size" -lt 512000 ]; then
+            echo "ERROR: bundle.js inside APK is only $size bytes (minimum 512000) — suspiciously small for the minified @tilawa/core + onnxruntime-web bundle (measured 1040578 bytes on 2026-11-25)."
+            exit 1
+          fi
+          echo 'bundle.js inside APK OK'
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
