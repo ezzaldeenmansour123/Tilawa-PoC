@@ -178,6 +178,10 @@ class WebViewEngine implements SpeechEngine {
         await _log?.append('meta', {
           'modelLoadMs': data['ms'],
           'backend': data['backend'],
+          // poc-10 diagnostics: proves on the phone whether the page was
+          // really cross-origin isolated and how many WASM threads ran.
+          'crossOriginIsolated': data['crossOriginIsolated'],
+          'threads': data['threads'],
         }, audioMs: null);
     }
   }

@@ -12,7 +12,7 @@
 //
 // Downloads happen ONCE, on explicit user request, from https://tilawa.dev/v1/
 // (model + reference) and from the jsDelivr CDN mirror of onnxruntime-web
-// (the 4 WASM runtime files — see kOrtWasmFiles below).
+// (the 2 WASM runtime files — see kOrtWasmFiles below).
 // After that the PoC works fully offline (airplane mode). Nothing is ever
 // downloaded silently in the background.
 
