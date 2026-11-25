@@ -4,7 +4,7 @@
 // installed (tier, version, size, short SHA-256) / load failed (reason).
 // Recitation cannot start before "installed".
 
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 
 import '../model_manager.dart';
 import '../speech_engine.dart';
