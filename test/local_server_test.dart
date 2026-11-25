@@ -85,10 +85,13 @@ void main() {
   setUp(() async {
     dir = await Directory.systemTemp.createTemp('poc-local-server-test-');
     await Directory('${dir.path}/ort/1.30.0').create(recursive: true);
-    await File('${dir.path}/ort/1.30.0/ort-wasm-simd-threaded.wasm')
-        .writeAsString('fake-wasm-bytes');
-    await File('${dir.path}/ort/1.30.0/ort-wasm-simd-threaded.mjs')
-        .writeAsString('fake-mjs-glue');
+    // JSEP pair (2026-11-26): onnxruntime-web 1.30.0 requests ONLY these
+    // two files — the non-JSEP pair the old fixtures used is never
+    // requested by the loader (0 occurrences in bundle.js).
+    await File('${dir.path}/ort/1.30.0/ort-wasm-simd-threaded.jsep.wasm')
+        .writeAsString('fake-jsep-wasm-bytes');
+    await File('${dir.path}/ort/1.30.0/ort-wasm-simd-threaded.jsep.mjs')
+        .writeAsString('fake-jsep-mjs-glue');
     await File('${dir.path}/model-lite.onnx').writeAsString('fake-model');
     await File('${dir.path}/model-full.onnx').writeAsString('fake-model-full');
     await File('${dir.path}/ref-v2.json').writeAsString('{"ayahs":[]}');
@@ -100,21 +103,45 @@ void main() {
     if (await dir.exists()) await dir.delete(recursive: true);
   });
 
-  test('serves the WASM runtime from /ort/<version>/ (the poc-12 bug)',
+  test('serves the JSEP runtime from /ort/<version>/ (the pro-build-28 404)',
       () async {
     final (status, body, headers) = await _get(
       server,
-      '/ort/1.30.0/ort-wasm-simd-threaded.wasm',
+      '/ort/1.30.0/ort-wasm-simd-threaded.jsep.wasm',
     );
     expect(status, 200);
-    expect(body, 'fake-wasm-bytes');
+    expect(body, 'fake-jsep-wasm-bytes');
     expect(headers.value('cross-origin-opener-policy'), 'same-origin');
-    final (mjsStatus, mjsBody, _) = await _get(
+    expect(headers.value('content-type'), contains('application/wasm'));
+    final (mjsStatus, mjsBody, mjsHeaders) = await _get(
       server,
-      '/ort/1.30.0/ort-wasm-simd-threaded.mjs',
+      '/ort/1.30.0/ort-wasm-simd-threaded.jsep.mjs',
     );
     expect(mjsStatus, 200);
-    expect(mjsBody, 'fake-mjs-glue');
+    expect(mjsBody, 'fake-jsep-mjs-glue');
+    expect(mjsHeaders.value('content-type'), contains('text/javascript'));
+  });
+
+  test('missing JSEP file 404s (a missing runtime is a clean 404, not a hang)',
+      () async {
+    final (wasmStatus, _, _) = await _get(
+      server,
+      '/ort/1.30.0/ort-wasm-simd-threaded.jsep.wasm',
+    );
+    expect(wasmStatus, 200);
+    await File('${dir.path}/ort/1.30.0/ort-wasm-simd-threaded.jsep.wasm')
+        .delete();
+    final (goneStatus, _, _) = await _get(
+      server,
+      '/ort/1.30.0/ort-wasm-simd-threaded.jsep.wasm',
+    );
+    expect(goneStatus, 404);
+    // The .mjs is served independently of the .wasm.
+    final (mjsStatus, _, _) = await _get(
+      server,
+      '/ort/1.30.0/ort-wasm-simd-threaded.jsep.mjs',
+    );
+    expect(mjsStatus, 200);
   });
 
   test('serves model + reference from /models/', () async {
@@ -204,6 +231,62 @@ void main() {
         'reference',
         expectedBytes: '{"ayahs":[]}'.length,
       );
+    });
+
+    // JSEP pre-flight contract (2026-11-26): the engine's pre-flight
+    // demands HTTP 200 + the EXACT pinned size of EACH JSEP file — a
+    // truncated .wasm must fail here, not inside loadWebModel. The
+    // fixtures are fake bytes, so the contract is exercised with their
+    // real lengths; the pinned sizes themselves are asserted in
+    // test/jsep_contract_test.dart.
+    test('passes for both JSEP files with their exact served size',
+        () async {
+      await checkServed(
+        '${server.baseUrl}ort/1.30.0/ort-wasm-simd-threaded.jsep.mjs',
+        'JSEP loader glue',
+        expectedBytes: 'fake-jsep-mjs-glue'.length,
+      );
+      await checkServed(
+        '${server.baseUrl}ort/1.30.0/ort-wasm-simd-threaded.jsep.wasm',
+        'JSEP WASM binary',
+        expectedBytes: 'fake-jsep-wasm-bytes'.length,
+      );
+    });
+
+    test('fails naming URL + expected/actual on a wrong JSEP size',
+        () async {
+      const url = 'ort/1.30.0/ort-wasm-simd-threaded.jsep.wasm';
+      try {
+        await checkServed(
+          '${server.baseUrl}$url',
+          'JSEP WASM binary',
+          expectedBytes: 999,
+        );
+        fail('expected checkServed to throw on a size mismatch');
+      } on CheckFailed catch (e) {
+        expect(e.message, contains(url));
+        expect(e.message, contains('999'));
+        expect(e.message,
+            contains('${'fake-jsep-wasm-bytes'.length}'));
+      }
+    });
+
+    test('fails naming URL + HTTP status on a missing JSEP file',
+        () async {
+      const url = 'ort/1.30.0/ort-wasm-simd-threaded.jsep.wasm';
+      await File('${dir.path}/ort/1.30.0/ort-wasm-simd-threaded.jsep.wasm')
+          .delete();
+      try {
+        await checkServed(
+          '${server.baseUrl}$url',
+          'JSEP WASM binary',
+          expectedBytes: 10,
+        );
+        fail('expected checkServed to throw on a 404');
+      } on CheckFailed catch (e) {
+        expect(e.message, contains(url));
+        expect(e.message, contains('404'));
+      }
     });
 
     test('fails naming URL + expected/actual on a wrong size', () async {
