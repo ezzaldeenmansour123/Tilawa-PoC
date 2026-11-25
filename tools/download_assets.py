@@ -55,16 +55,49 @@ MODELS = {
     },
 }
 ORT_VERSION = "1.30.0"  # must match web/package.json + lib/model_manager.dart
-# onnxruntime-web files needed by the bundle. VERIFIED 2026-11-25 against
-# the live jsDelivr listing: 1.30.0 (and every version back to 1.19.0)
-# ships ONLY simd-threaded builds — ort-wasm-simd.wasm / ort-wasm.wasm
-# do NOT exist, and the old 4-file list 404'd on the phone (poc-9).
-# The .mjs is the Emscripten loader glue the runtime fetches from
-# wasmPaths alongside the .wasm. Keep in sync with lib/model_manager.dart.
+# onnxruntime-web files needed by the bundle. VERIFIED 2026-11-26 against
+# the jsDelivr source itself (downloaded from
+# https://cdn.jsdelivr.net/npm/onnxruntime-web@1.30.0/dist/ and checked
+# byte-identical against web/node_modules/onnxruntime-web/dist/): the
+# 1.30.0 "all" build loads ONLY the JSEP pair — the filename is hardcoded
+# in onnxruntime-web/lib/wasm/wasm-utils-import.ts:284 — and NEVER requests
+# the non-JSEP pair (0 occurrences in assets/web/bundle.js). The non-JSEP
+# pair was downloaded, verified and served for poc-9…pro-build-28 while
+# the loader 404'd on the JSEP pair, so the JSEP pair REPLACES it here.
+# Keep in sync with lib/model_manager.dart (kOrtWasmFiles/kOrtWasmAssets).
 ORT_WASM_FILES = [
-    "ort-wasm-simd-threaded.mjs",
-    "ort-wasm-simd-threaded.wasm",
+    "ort-wasm-simd-threaded.jsep.mjs",
+    "ort-wasm-simd-threaded.jsep.wasm",
 ]
+# Pinned JSEP identity (2026-11-26, jsDelivr-verified — see above).
+ORT_WASM = {
+    "ort-wasm-simd-threaded.jsep.mjs": {
+        "bytes": 46851,
+        "sha256": "709853412fd1ffc34247af1e73569227b5b79629c5ca3f59cc39cf7e500e4947",
+    },
+    "ort-wasm-simd-threaded.jsep.wasm": {
+        "bytes": 28312028,
+        "sha256": "3ad23231b5bd6d9dda55a7f84606315e0bf35b6750c28ee993c987c54cacab0f",
+    },
+}
+
+
+def check_ort_file(path: Path, name: str) -> bool:
+    """True only when the JSEP file exists with its pinned size + SHA-256."""
+    spec = ORT_WASM[name]
+    if not path.exists():
+        print(f"MISSING {path}")
+        return False
+    size = path.stat().st_size
+    if size != spec["bytes"]:
+        print(f"SIZE MISMATCH {path}: {size} != {spec['bytes']}")
+        return False
+    digest = sha256_of(path)
+    if digest != spec["sha256"]:
+        print(f"SHA MISMATCH {path}: {digest} != {spec['sha256']}")
+        return False
+    print(f"OK {path} ({size} bytes, sha256 {digest[:12]}...)")
+    return True
 
 
 def sha256_of(path: Path) -> str:
@@ -187,9 +220,12 @@ def main() -> int:
     ort_dir.mkdir(parents=True, exist_ok=True)
     for name in ORT_WASM_FILES:
         target = ort_dir / name
-        if target.exists():
-            print(f"OK {target} (cached)")
+        if target.exists() and check_ort_file(target, name):
             continue
+        if target.exists():
+            # Present but wrong size/SHA: never trust a stale file —
+            # re-download it instead of reporting "cached".
+            print(f"Re-downloading {target} (failed size/SHA check) ...")
         url = (
             f"https://cdn.jsdelivr.net/npm/onnxruntime-web@{ORT_VERSION}"
             f"/dist/{name}"
@@ -197,7 +233,8 @@ def main() -> int:
         print(f"Downloading {url} ...")
         try:
             download(url, target)
-            print(f"OK {target} ({target.stat().st_size} bytes)")
+            if not check_ort_file(target, name):
+                return 1
         except Exception as exc:  # noqa: BLE001 - fail the build loudly
             # A missing WASM file MUST fail CI: the old WARN-only behaviour
             # let the poc-9 404 (ort-wasm-simd.wasm does not exist in
