@@ -48,16 +48,22 @@ class LocalServer {
   ///
   /// Why this matters — fixed 2026-11-25 after the poc-9 phone test:
   /// onnxruntime-web >= 1.19 ships ONLY multi-threaded WASM builds
-  /// (ort-wasm-simd-threaded.wasm); the single-threaded files
-  /// (ort-wasm-simd.wasm, ort-wasm.wasm) do NOT exist in the package,
-  /// so the loader 404s on them whenever numThreads == 1. And
-  /// @tilawa/core/web sets numThreads = 1 whenever the page is NOT
-  /// cross-origin isolated. Android WebView DOES support SharedArrayBuffer
-  /// — it is gated on cross-origin isolation (Chromium >= 92), exactly
-  /// like desktop Chrome — so serving COOP: same-origin + COEP:
-  /// require-corp makes `crossOriginIsolated === true`, lets the loader
-  /// use the threaded build, and unblocks the engine. The earlier claim
-  /// in this file ("isolation is impossible in WebView") was wrong.
+  /// (ort-wasm-simd-threaded.*); the single-threaded files
+  /// (ort-wasm-simd.wasm, ort-wasm.wasm) do NOT exist in the package.
+  /// CORRECTED 2026-11-26: the earlier claim in this file ("the loader
+  /// 404s on [single-threaded files] whenever numThreads == 1") was
+  /// wrong. The 1.30.0 "all" build requests ONLY the JSEP pair
+  /// (ort-wasm-simd-threaded.jsep.mjs/.wasm, hardcoded in
+  /// lib/wasm/wasm-utils-import.ts:284) REGARDLESS of thread count, and
+  /// when the page is not isolated the loader simply runs those SAME
+  /// files single-threaded (numThreads forced to 1 by @tilawa/core,
+  /// warn-and-fall-back in lib/wasm/wasm-factory.ts:131-149). Isolation
+  /// is therefore about enabling threads > 1, never about which files
+  /// are fetched — and it can never fix a missing-file 404. The earlier
+  /// claim in this file ("isolation is impossible in WebView") was also
+  /// wrong. Whether this S22 Ultra's WebView actually reports
+  /// crossOriginIsolated == true is still to be measured on-device —
+  /// the bridge's pre-load env-probe measures it (see web/src/bridge.js).
   /// CORP: same-origin on every response is what lets COEP require-corp
   /// admit our own same-origin subresources (bundle, model, wasm).
   static void _isolationHeaders(HttpResponse res) {
@@ -121,6 +127,13 @@ class LocalServer {
         // onnxruntime-web WASM files, downloaded by tools/download_assets.py
         // into <modelDir>/ort/<version>/.
         //
+        // The /ort/ branch is generic (any path under <modelDir>/ort/),
+        // so it serves the JSEP pair
+        // (ort-wasm-simd-threaded.jsep.mjs/.wasm) the moment the files
+        // are downloaded — no route change was needed for the 2026-11-26
+        // JSEP fix; the pro-build-28 404 was a missing FILE, not a
+        // missing route. MIME is text/javascript for .mjs and
+        // application/wasm for .wasm (see _mime above).
         // FIXED 2026-11-25 (Phase 2, item 2.2; the poc-12 phone failure —
         // the engine never became ready, 120 s timeout, no error): the
         // old code built File('${_modelDir.path}${path.substring(1)}'),

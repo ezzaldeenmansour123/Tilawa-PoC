@@ -70,6 +70,20 @@ class WebViewEngine implements SpeechEngine {
   /// absence instead of assuming a probe ran.
   bool _probePassed = false;
 
+  /// The last 'env-probe' payload from the bridge (pre-load environment:
+  /// crossOriginIsolated, SharedArrayBuffer, navigator.gpu + adapter,
+  /// provider list, threads, JSEP file HTTP status). Posted by the bridge
+  /// BEFORE loadWebModel, so it is present even when the load fails — the
+  /// field that lets a failed load name its cause. Kept in a field
+  /// because the event log is not open yet during load(); beginLog
+  /// carries it into the session log, and the 'error' handler appends a
+  /// one-line summary to the failure message.
+  Map<String, dynamic>? _lastEnvProbe;
+
+  /// Last pre-load environment probe, or null before the bridge posts
+  /// one. Exposed so the UI / diagnostics can show why a load failed.
+  Map<String, dynamic>? get lastEnvProbe => _lastEnvProbe;
+
   /// The last 'modelLoadMs' payload from the bridge (load time, backend,
   /// crossOriginIsolated, threads) — the proof the ONNX Inference
   /// Session was created. Kept in a field because the event log is not
@@ -133,6 +147,7 @@ class WebViewEngine implements SpeechEngine {
     _loadStages.clear();
     _probePassed = false;
     _lastModelLoad = null;
+    _lastEnvProbe = null;
     // Last completed stage (Arabic label), shown in the timeout error so
     // a hang is never silent again: the UI mirrors it live via onStage.
     // Stage map for this load path (check files → check model → verify
@@ -239,10 +254,18 @@ class WebViewEngine implements SpeechEngine {
       'حزمة المحرك (bundle.js)',
     );
     setStage('جارٍ التحقق من ملفات التشغيل عبر الخادم المحلي…');
-    for (final name in kOrtWasmFiles) {
+    // JSEP pre-flight (2026-11-26): onnxruntime-web 1.30.0 requests ONLY
+    // the JSEP pair (ort-wasm-simd-threaded.jsep.mjs/.wasm) — the old
+    // non-JSEP pair was checked here while the loader 404'd on the JSEP
+    // files, so every gate passed and the phone still failed. Demand
+    // HTTP 200 + the exact pinned size of EACH JSEP file, not just
+    // "non-empty": a truncated .wasm would pass a non-empty check and
+    // fail only inside loadWebModel.
+    for (final asset in kOrtWasmAssets) {
       await _checkServed(
-        '${_server!.baseUrl}ort/$kOrtWebVersion/$name',
-        'ملف التشغيل $name',
+        '${_server!.baseUrl}ort/$kOrtWebVersion/${asset.name}',
+        'ملف التشغيل ${asset.name}',
+        expectedBytes: asset.bytes,
       );
     }
     // PRE-FLIGHT: model + reference (2026-11-26 404 fix, ported from
@@ -408,6 +431,20 @@ class WebViewEngine implements SpeechEngine {
                   ? 'جارٍ إنشاء جلسة المحرك…'
                   : 'جارٍ تحميل النموذج داخل المحرك…');
         }
+      case 'env-probe':
+        // Pre-load environment probe from the bridge (posted BEFORE
+        // loadWebModel): crossOriginIsolated, SharedArrayBuffer, GPU
+        // adapter, provider list, threads, JSEP file HTTP status. This
+        // is the evidence that lets a failed load name its cause — store
+        // it even though the event log is not open yet (beginLog carries
+        // it into the session log; the 'error' handler appends a
+        // one-line summary to the failure message). A probe that never
+        // arrives (stale bundle) leaves this null, which is itself
+        // recorded instead of assumed.
+        _lastEnvProbe = (data['probe'] as Map?)?.cast<String, dynamic>();
+        debugPrint('[WebViewEngine] env-probe: $_lastEnvProbe');
+        await _log?.append('meta', {'envProbe': _lastEnvProbe},
+            audioMs: null);
       case 'probe':
         // Explicit warmup-probe result from the bridge (posted right
         // after loadWebModel resolves): the ONNX session was created and
@@ -464,8 +501,15 @@ class WebViewEngine implements SpeechEngine {
             data['capabilities'] as Map<String, dynamic>,
             audioMs: null);
       case 'error':
+        // Attach the pre-load probe summary so the failure names its
+        // cause in the UI-visible message (the bridge already appends
+        // the same facts; this covers a probe that arrived but whose
+        // bridge-side context was lost, and a stale bundle whose error
+        // carries no context at all — in that case the summary says the
+        // probe never arrived, which is itself the diagnosis).
         final err = SpeechEngineException(
-          (data['message'] ?? 'خطأ من المحرك') as String,
+          (data['message'] ?? 'خطأ من المحرك') as String +
+              _envProbeSummary(),
           reason: data['reason'] as String?,
         );
         _failLoad(err);
@@ -499,6 +543,38 @@ class WebViewEngine implements SpeechEngine {
             'threads=${data['threads']}');
         await _log?.append('meta', _lastModelLoad!, audioMs: null);
     }
+  }
+
+  /// One-line summary of the pre-load environment probe, appended to a
+  /// load-failure message so the failure names its cause. Returns '' when
+  /// no probe arrived (stale bundle) — the message then says so, which is
+  /// itself the diagnosis (a load that fails with no probe means the
+  /// bundle predates the diagnostics, not that the environment is fine).
+  String _envProbeSummary() {
+    final probe = _lastEnvProbe;
+    if (probe == null) {
+      return ' [تشخيص بيئة التحميل: لم يصل — حزمة قديمة بلا فحص بيئة]';
+    }
+    final parts = <String>[];
+    parts.add('crossOriginIsolated=${probe['crossOriginIsolated']}');
+    parts.add('SAB=${probe['sharedArrayBuffer']}'
+        '${probe['sabLive'] == true ? '(live)' : '(not-live)'}');
+    final webgpu = probe['webgpu'];
+    if (webgpu is Map) {
+      parts.add('gpu=${webgpu['inNavigator'] == true ? 'present' : 'absent'}'
+          '/adapter=${webgpu['adapter']}');
+    }
+    final jsep = probe['jsep'];
+    if (jsep is Map) {
+      for (final entry in jsep.entries) {
+        final v = entry.value;
+        if (v is Map) {
+          parts.add('${entry.key}:HTTP${v['status']}');
+        }
+      }
+    }
+    parts.add('threads=${probe['threadsApplied']}');
+    return ' [تشخيص بيئة التحميل: ${parts.join(' ')}]';
   }
 
   /// Fails the pending load (if any) with [err]; otherwise forwards it
@@ -611,6 +687,11 @@ class WebViewEngine implements SpeechEngine {
       // never assumed true.
       'probePassed': _probePassed,
       'modelLoad': _lastModelLoad,
+      // Pre-load environment probe (2026-11-26): the facts the bridge
+      // measured before loadWebModel (isolation, SAB, GPU adapter,
+      // providers, threads, JSEP HTTP status). Null means the probe
+      // never arrived (stale bundle) — recorded as-is, never assumed.
+      'envProbe': _lastEnvProbe,
       // Offline evidence (b): the engine's only network surface is the
       // localhost server (model, reference and WASM all served from
       // 127.0.0.1; the microphone goes straight into the engine) — no
