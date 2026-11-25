@@ -50,6 +50,7 @@ class _RecitationScreenState extends State<RecitationScreen> {
   final List<String> _notes = [];
   StreamSubscription<Object>? _sub;
   bool _running = false;
+  bool _loading = false;
   String? _error;
   int? _loadMs;
   int? _lastLatencyMs;
@@ -61,18 +62,19 @@ class _RecitationScreenState extends State<RecitationScreen> {
 
   Future<void> _start() async {
     setState(() {
+      _loading = true;
       _error = null;
       _mistakes.clear();
       _notes.clear();
       _current = null;
     });
-    final mic = await Permission.microphone.request();
-    if (!mic.isGranted) {
-      setState(() => _error =
-          'إذن الميكروفون مرفوض — امنحه من إعدادات النظام ثم أعد المحاولة. (هذا اختبار بحد ذاته: يجب أن تظهر هذه الرسالة بوضوح بلا تعطل.)');
-      return;
-    }
     try {
+      final mic = await Permission.microphone.request();
+      if (!mic.isGranted) {
+        setState(() => _error =
+            'إذن الميكروفون مرفوض — امنحه من إعدادات النظام ثم أعد المحاولة. (هذا اختبار بحد ذاته: يجب أن تظهر هذه الرسالة بوضوح بلا تعطل.)');
+        return;
+      }
       final t0 = DateTime.now();
       await widget.engine.load(tier: 'lite');
       _loadMs = DateTime.now().difference(t0).inMilliseconds;
@@ -103,6 +105,10 @@ class _RecitationScreenState extends State<RecitationScreen> {
       setState(() => _running = true);
     } on SpeechEngineException catch (e) {
       setState(() => _error = e.toString());
+    } catch (e) {
+      setState(() => _error = 'خطأ غير متوقع: $e');
+    } finally {
+      if (mounted) setState(() => _loading = false);
     }
   }
 
@@ -254,9 +260,17 @@ class _RecitationScreenState extends State<RecitationScreen> {
               )),
           const SizedBox(height: 12),
           FilledButton.icon(
-            onPressed: _running ? _stop : _start,
-            icon: Icon(_running ? Icons.stop : Icons.mic),
-            label: Text(_running ? 'إيقاف الجلسة' : 'ابدأ التسميع'),
+            onPressed: _running ? _stop : (_loading ? null : _start),
+            icon: _loading
+                ? const SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : Icon(_running ? Icons.stop : Icons.mic),
+            label: Text(_running
+                ? 'إيقاف الجلسة'
+                : (_loading ? 'جارٍ تحميل النموذج...' : 'ابدأ التسميع')),
           ),
           const SizedBox(height: 8),
           const Text(
