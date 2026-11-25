@@ -42,6 +42,29 @@ class LocalServer {
     '.css': 'text/css; charset=utf-8',
   };
 
+  /// Cross-origin isolation headers (COOP + COEP + CORP), applied to
+  /// EVERY response the server sends.
+  ///
+  /// Why this matters — fixed 2026-11-25 after the poc-9 phone test:
+  /// onnxruntime-web >= 1.19 ships ONLY multi-threaded WASM builds
+  /// (ort-wasm-simd-threaded.wasm); the single-threaded files
+  /// (ort-wasm-simd.wasm, ort-wasm.wasm) do NOT exist in the package,
+  /// so the loader 404s on them whenever numThreads == 1. And
+  /// @tilawa/core/web sets numThreads = 1 whenever the page is NOT
+  /// cross-origin isolated. Android WebView DOES support SharedArrayBuffer
+  /// — it is gated on cross-origin isolation (Chromium >= 92), exactly
+  /// like desktop Chrome — so serving COOP: same-origin + COEP:
+  /// require-corp makes `crossOriginIsolated === true`, lets the loader
+  /// use the threaded build, and unblocks the engine. The earlier claim
+  /// in this file ("isolation is impossible in WebView") was wrong.
+  /// CORP: same-origin on every response is what lets COEP require-corp
+  /// admit our own same-origin subresources (bundle, model, wasm).
+  static void _isolationHeaders(HttpResponse res) {
+    res.headers.add('Cross-Origin-Opener-Policy', 'same-origin');
+    res.headers.add('Cross-Origin-Embedder-Policy', 'require-corp');
+    res.headers.add('Cross-Origin-Resource-Policy', 'same-origin');
+  }
+
   Future<void> _handle(HttpRequest req) async {
     try {
       final path = req.uri.path;
@@ -75,9 +98,7 @@ class LocalServer {
     req.response.headers.contentType =
         ContentType.parse(_mime[ext] ?? 'application/octet-stream');
     req.response.headers.add('Cache-Control', 'no-store');
-    // COOP/COEP are NOT set: Android WebView has no SharedArrayBuffer, so
-    // cross-origin isolation is impossible here — WASM runs single-threaded.
-    // (This is a measured PoC limitation, not a bug: see docs/MEASUREMENT_PLAN.md.)
+    _isolationHeaders(req.response);
     req.response.add(data.buffer.asUint8List(data.offsetInBytes, data.lengthInBytes));
     await req.response.close();
   }
@@ -94,6 +115,7 @@ class LocalServer {
     req.response.headers.contentType =
         ContentType.parse(_mime[ext] ?? 'application/octet-stream');
     req.response.headers.add('Cache-Control', 'no-store');
+    _isolationHeaders(req.response);
     req.response.headers.contentLength = await file.length();
     await req.response.addStream(file.openRead());
     await req.response.close();
