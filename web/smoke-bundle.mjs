@@ -10,6 +10,12 @@
 //     `test -s` / `node --check` can never catch that);
 //   - after evaluation, `window.TilawaPoc` is an object exposing the four
 //     bridge methods Dart calls: init, startSession, stopSession, dispose.
+//   - the pre-load environment probe (`TilawaPoc.probeEnvironment()`)
+//     runs without throwing and returns the expected shape
+//     (crossOriginIsolated, SharedArrayBuffer typeof + live probe,
+//     navigator.gpu + adapter, provider list, JSEP status) — the probe
+//     is what lets a failed phone load name its cause, so a bundle
+//     whose probe throws (or is missing) fails here, not on the phone.
 //
 // What this does NOT prove (stated honestly):
 //   - no model is loaded, no WASM is instantiated, no audio flows, no
@@ -28,7 +34,7 @@ import { statSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 const GLOBAL_NAME = 'TilawaPoc';
-const EXPECTED_METHODS = ['init', 'startSession', 'stopSession', 'dispose'];
+const EXPECTED_METHODS = ['init', 'startSession', 'stopSession', 'dispose', 'probeEnvironment'];
 
 const bundlePath = process.argv[2]
   ? process.argv[2]
@@ -95,4 +101,44 @@ console.log(
   `BUNDLE SMOKE OK: ${bundlePath} (${stat.size} bytes) evaluated cleanly; ` +
     `window.${GLOBAL_NAME} exposes ${EXPECTED_METHODS.join(', ')}.`,
 );
+
+// PROBE CHECK: run the pre-load environment probe with no wasmPaths
+// (so the JSEP HTTP check is skipped — there is no server here) and
+// assert its shape. This runs the REAL probe code from bridge.js in
+// this Node process: a probe that throws, hangs, or returns the wrong
+// shape fails the smoke run. Expected values in THIS environment
+// (Node 24, no WebView, no GPU): crossOriginIsolated false, SAB defined
+// (Node exposes SharedArrayBuffer), webgpu unavailable (the navigator
+// shim has gpu: undefined), adapter 'skipped', providers the default
+// ["webgpu", "wasm"], jsep 'not-checked'.
+const probeFailures = [];
+const probe = await bridge.probeEnvironment({});
+console.log(`  env-probe result: ${JSON.stringify(probe)}`);
+if (probe.crossOriginIsolated !== false) {
+  probeFailures.push(`crossOriginIsolated=${probe.crossOriginIsolated}, expected false in Node`);
+}
+if (probe.sharedArrayBuffer !== 'function') {
+  probeFailures.push(`sharedArrayBuffer=${probe.sharedArrayBuffer}, expected 'function' in Node 24`);
+}
+if (typeof probe.sabLive !== 'boolean') {
+  probeFailures.push(`sabLive=${probe.sabLive}, expected a boolean`);
+}
+if (probe.webgpu?.available !== false || probe.webgpu?.adapter !== 'skipped') {
+  probeFailures.push(`webgpu=${JSON.stringify(probe.webgpu)}, expected available=false adapter='skipped'`);
+}
+if (JSON.stringify(probe.providers) !== JSON.stringify(['webgpu', 'wasm'])) {
+  probeFailures.push(`providers=${JSON.stringify(probe.providers)}, expected ["webgpu","wasm"]`);
+}
+if (probe.jsep !== 'not-checked (no wasmPaths)') {
+  probeFailures.push(`jsep=${JSON.stringify(probe.jsep)}, expected 'not-checked (no wasmPaths)'`);
+}
+if (probe.probeError !== undefined) {
+  probeFailures.push(`probeError=${probe.probeError}`);
+}
+if (probeFailures.length > 0) {
+  console.error('SMOKE FAIL: env-probe shape/value mismatch:');
+  for (const f of probeFailures) console.error(`  - ${f}`);
+  process.exit(1);
+}
+console.log('PROBE SMOKE OK: probeEnvironment() returned the expected shape without throwing.');
 console.log('NOTE: this proves evaluation + bridge shape only — no model/WASM/mic/WebView was exercised.');

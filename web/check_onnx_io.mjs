@@ -10,12 +10,16 @@
 //      intraOpNumThreads 1, graphOptimizationLevel "all").
 //   2. The session's input/output names, dtypes and shapes match EXACTLY
 //      what @tilawa/core expects to feed and read (see EXPECTED I/O below).
-//   3. One inference run succeeds with feeds built EXACTLY like the web
+//   3. TWO real inference runs with feeds built EXACTLY like the web
 //      loader's warmup probe (loadWebModel -> warmup in @tilawa/core
 //      dist/runtime/web.js): x filled with the manifest padValue, every
 //      manifest state zero-filled — and the outputs the listener needs
 //      (log_probs + new_<state> per state) come back with the right
-//      type/shape.
+//      type/shape and all-finite values. The second run is CHAINED: it
+//      feeds run 1's new_<state> outputs back as the state inputs, the
+//      way the listener loop hands state from step N to step N+1 — a
+//      model whose states cannot round-trip would pass a single probe
+//      run and fail the first real session step.
 //
 // EXPECTED I/O — measured from @tilawa/core 1.0.0-rc.1
 // (web/node_modules/@tilawa/core/dist/runtime/{web,listener,node}.js):
@@ -47,6 +51,11 @@
 // environment. It NEVER proves tasmee' works on the phone — the phone
 // path (WebView + onnxruntime-web/WASM + microphone + Dart bridge) is
 // verified by the separate on-device phone protocol, not by this file.
+// Stated plainly: this script validates the MODEL (I/O + real inference
+// on onnxruntime-node/cpu) — NOT the WebView backend. It loads no WASM
+// file, sets no wasmPaths, fetches no JSEP pair, runs no WebView, and
+// has no navigator.gpu; a PASS here is compatible with the phone failing
+// on a missing JSEP file or a poisoned initWasm().
 
 import { createHash } from 'node:crypto';
 import { createReadStream, readFileSync, statSync } from 'node:fs';
@@ -376,6 +385,89 @@ if (out) {
     }
   }
   console.log('    new_* state outputs: checked (only failures listed above)');
+  // log_probs must be finite: NaN/Inf rows would pass every shape check
+  // above and then poison the listener's decoding on the first real step.
+  if (lp && lp.data) {
+    let nonFinite = 0;
+    for (let i = 0; i < lp.data.length; i++) {
+      if (!Number.isFinite(lp.data[i])) nonFinite++;
+    }
+    if (nonFinite > 0) {
+      fail(`log_probs contains ${nonFinite} non-finite values out of ${lp.data.length}`);
+    } else {
+      console.log(`    log_probs: OK (all ${lp.data.length} values finite)`);
+    }
+  }
+}
+
+// ---- 5. Second CHAINED run: feed run-1 outputs back as states. ----
+// The listener loop does this on every step after the first: the
+// new_<state> outputs of step N become the <state> inputs of step N+1.
+// A model whose states cannot round-trip would pass the single probe run
+// above and fail the first real session step, so verify the handoff
+// explicitly with a second real inference pass (x re-filled with
+// padValue, states taken verbatim from run 1 — no re-zeroing).
+if (out) {
+  console.log('  chained run (step 2: states from run 1, x=padValue):');
+  const feeds2 = {};
+  {
+    const xData = new Float32Array(window_ * mels).fill(padValue);
+    feeds2.x = new ort.Tensor('float32', xData, [1, window_, mels]);
+    for (const s of states) {
+      const prev = out[`new_${s.name}`];
+      if (!prev) { fail(`chained run: run 1 returned no 'new_${s.name}' to feed back`); break; }
+      feeds2[s.name] = new ort.Tensor(s.dtype, prev.data, s.shape);
+    }
+  }
+  let out2 = null;
+  const t2 = Date.now();
+  try {
+    out2 = await session.run(feeds2);
+    console.log(`  chained run: OK (${Date.now() - t2} ms)`);
+  } catch (err) {
+    fail(`chained run threw: ${err && err.message ? err.message : String(err)}`);
+  }
+  if (out2) {
+    const lp2 = out2.log_probs;
+    if (!lp2) {
+      fail("chained run returned no 'log_probs' output");
+    } else {
+      const len2 = lp2.data ? lp2.data.length : 0;
+      const lastDim2 = lp2.dims && lp2.dims.length ? lp2.dims[lp2.dims.length - 1] : null;
+      console.log(`    log_probs: type=${lp2.type} dims=[${(lp2.dims || []).join(', ')}] data.length=${len2}`);
+      if (lp2.type !== 'float32') fail(`chained log_probs type=${lp2.type}, expected float32`);
+      if (lastDim2 !== null && lastDim2 !== vocab) {
+        fail(`chained log_probs last dim=${lastDim2}, expected vocab ${vocab}`);
+      }
+      if (len2 === 0 || len2 % vocab !== 0) {
+        fail(`chained log_probs data.length=${len2} is not a positive multiple of vocab ${vocab}`);
+      } else {
+        let nonFinite2 = 0;
+        for (let i = 0; i < lp2.data.length; i++) {
+          if (!Number.isFinite(lp2.data[i])) nonFinite2++;
+        }
+        if (nonFinite2 > 0) {
+          fail(`chained log_probs contains ${nonFinite2} non-finite values out of ${lp2.data.length}`);
+        } else {
+          console.log(`    log_probs: OK (${len2 / vocab} output frames x vocab ${vocab}, all values finite)`);
+        }
+      }
+    }
+    for (const s of states) {
+      const o2 = out2[`new_${s.name}`];
+      if (!o2) { fail(`chained run returned no 'new_${s.name}' output`); continue; }
+      if (o2.type !== s.dtype) {
+        fail(`chained 'new_${s.name}' type=${o2.type}, expected ${s.dtype}`);
+        continue;
+      }
+      const sameDims2 = Array.isArray(o2.dims) && o2.dims.length === s.shape.length
+        && o2.dims.every((d, i) => d === s.shape[i]);
+      if (!sameDims2) {
+        fail(`chained 'new_${s.name}' dims=[${(o2.dims || []).join(', ')}], expected [${s.shape.join(', ')}]`);
+      }
+    }
+    console.log('    chained new_* state outputs: checked (only failures listed above)');
+  }
 }
 
 try { await session.release?.(); } catch { /* best-effort */ }
