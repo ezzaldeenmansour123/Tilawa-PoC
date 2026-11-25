@@ -38,12 +38,15 @@ jobs:
         run: |
           python3 tools/download_assets.py --tier lite --out /tmp/poc-models
           python3 tools/check_ref_schema.py /tmp/poc-models/ref-v2.json
-          # Lay the files out exactly like the tilawa.dev hosting layout,
-          # which is what loadNodeModel's `modelDir` is documented to load
-          # ("a model directory you already have"). If the SDK rejects this
-          # layout, this job fails loudly — that is the smoke test working.
+          # Lay the files out exactly like the tilawa.dev hosting layout.
+          # loadNodeModel(dir) reads dir/manifest.json and then loads
+          # dir/<manifest.file> — so `dir` must be the model VERSION
+          # directory itself (models/<id>/<version>), NOT the host root:
+          # the host root has no manifest.json, which is why run #2 failed
+          # with ENOENT on /tmp/poc-host/manifest.json.
           mkdir -p /tmp/poc-host/models/spliced-clean-lite/1-int8 /tmp/poc-host/reference
           cp /tmp/poc-models/model-lite.onnx /tmp/poc-host/models/spliced-clean-lite/1-int8/model.onnx
+          cp /tmp/poc-models/manifest-lite.json /tmp/poc-host/models/spliced-clean-lite/1-int8/manifest.json
           cp /tmp/poc-models/ref-v2.json /tmp/poc-host/reference/ref-v2.json
       - name: Install engine + runtime
         run: |
@@ -58,7 +61,7 @@ jobs:
         run: |
           node --input-type=module -e "
             import { createTilawa, loadNodeModel } from '@tilawa/core/node';
-            const model = await loadNodeModel('/tmp/poc-host');
+            const model = await loadNodeModel('/tmp/poc-host/models/spliced-clean-lite/1-int8');
             const tilawa = await createTilawa({ model });
             const session = tilawa.startFreeRecitation();
             const events = [];
