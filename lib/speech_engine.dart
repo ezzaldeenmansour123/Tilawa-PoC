@@ -135,6 +135,8 @@ class ModelInfo {
     this.downloadFraction,
     this.error,
     this.ortBytes,
+    this.referenceOk,
+    this.wasmOk,
   });
 
   final ModelStatus status;
@@ -145,6 +147,12 @@ class ModelInfo {
   final double? downloadFraction; // 0..1 while downloading
   final String? error;
   final int? ortBytes; // total bytes of downloaded onnxruntime-web WASM files
+
+  /// نتيجة فحص المرجع في status(): true = موجود + SHA مطابقة + 6236 آية.
+  final bool? referenceOk;
+
+  /// نتيجة فحص WASM في status(): true = الحجم + SHA مطابقان للملفين.
+  final bool? wasmOk;
 }
 
 class SpeechEngineException implements Exception {
