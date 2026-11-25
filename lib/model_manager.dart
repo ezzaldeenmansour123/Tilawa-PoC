@@ -204,7 +204,7 @@ class ModelManager {
           .getUrl(Uri.parse('$kOrtBaseUrl/$name'));
       final res = await req.close();
       if (res.statusCode != 200) {
-        await tmp.delete().catchError((_) {});
+        await tmp.delete().catchError((_) => tmp);
         throw SpeechEngineException(
             'فشل تنزيل ملف التشغيل $name: HTTP ${res.statusCode}');
       }
