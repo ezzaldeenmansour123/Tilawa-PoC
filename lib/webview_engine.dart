@@ -16,8 +16,12 @@
 //     reason "unavailable" and the PoC records NO-GO for the WebView path).
 //   - Whether WebGPU is available inside the WebView (the `backend` field
 //     of the capabilities event tells us: "webgpu" | "wasm" | "cpu").
-//   - WASM is single-threaded in Android WebView (no SharedArrayBuffer),
-//     so expect slower-than-desktop highlighting; the metrics will show it.
+//   - WASM is multi-threaded in Android WebView now that LocalServer
+//     sends COOP + COEP (cross-origin isolation enables SharedArrayBuffer;
+//     fixed 2026-11-25 after the poc-9 phone test showed the 1.30.0
+//     loader 404ing on the single-threaded files that no longer exist).
+//     Whether this S22 Ultra's WebView actually reports
+//     crossOriginIsolated == true is still to be measured on-device.
 
 import 'dart:async';
 import 'dart:convert';
