@@ -118,7 +118,7 @@ class WebViewEngine implements SpeechEngine {
     _loadCompleter = completer;
     await _controller!.runJavaScript(
       'window.TilawaPoc.init(${jsonEncode({
-        'assetBase': '${_server!.baseUrl}',
+        'assetBase': _server!.baseUrl,
         'tier': tier,
         'modelUrl': '${_server!.baseUrl}models/model-$tier.onnx',
         'referenceUrl': '${_server!.baseUrl}models/ref-v2.json',
