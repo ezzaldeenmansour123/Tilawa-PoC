@@ -3,6 +3,9 @@
 
 Downloads, into --out (default assets/models):
   - model-lite.onnx (24,650,054 bytes) or model-full.onnx (67,759,744 bytes)
+  - manifest-lite.json / manifest-full.json (the per-model manifest;
+    loadNodeModel(dir) reads dir/manifest.json, so the Node smoke test
+    needs it next to the .onnx file)
   - ref-v2.json (reference; no pinned SHA in the model card — verified by
     byte count + tools/check_ref_schema.py)
   - onnxruntime-web <version> WASM files (from the jsDelivr CDN mirror of
@@ -35,12 +38,20 @@ MODELS = {
         "version": "1-int8",
         "bytes": 24650054,
         "sha256": "4974de78d3c35d2542e7a24d99b747e1160d6e31e366fb68492b74a789890f1b",
+        # Per-model manifest (models/<id>/<version>/manifest.json) — the
+        # file loadNodeModel(dir) reads as dir/manifest.json, then loads
+        # dir/<manifest.file>. Verified 2026-11-25 against the live
+        # https://tilawa.dev/v1/manifest.json file list.
+        "manifest_bytes": 8534,
+        "manifest_sha256": "3f77f6368421a13ba8b0ca8e1610bd4a84ef3ac7407965d5c3cb9e322479cb30",
     },
     "full": {
         "id": "spliced-clean",
         "version": "1-int8",
         "bytes": 67759744,
         "sha256": "714e98addee73b1b8781ad7d99b6d3c745acd9116638baf4e12891f53a15af1b",
+        "manifest_bytes": 11045,
+        "manifest_sha256": "eb017b76cdca4261451ef5071acc637b57c5b62ed7ddb36f5daca1a2fc08d2b1",
     },
 }
 ORT_VERSION = "1.30.0"  # must match web/package.json + lib/model_manager.dart
@@ -94,6 +105,30 @@ def check_model(out: Path, tier: str) -> bool:
     return True
 
 
+def check_manifest(out: Path, tier: str) -> bool:
+    spec = MODELS[tier]
+    dest = out / f"manifest-{tier}.json"
+    if not dest.exists():
+        print(f"MISSING {dest}")
+        return False
+    size = dest.stat().st_size
+    if size != spec["manifest_bytes"]:
+        print(f"SIZE MISMATCH {dest}: {size} != {spec['manifest_bytes']}")
+        return False
+    digest = sha256_of(dest)
+    if digest != spec["manifest_sha256"]:
+        print(f"SHA MISMATCH {dest}: {digest} != {spec['manifest_sha256']}")
+        return False
+    data = json.loads(dest.read_text(encoding="utf-8"))
+    if data.get("file") != "model.onnx" or data.get("id") != spec["id"]:
+        print(f"MANIFEST CONTENT MISMATCH {dest}: "
+              f"id={data.get('id')} file={data.get('file')}")
+        return False
+    print(f"OK {dest} ({size} bytes, sha256 {digest[:12]}..., "
+          f"id={data['id']}, file={data['file']})")
+    return True
+
+
 def check_reference(out: Path) -> bool:
     dest = out / "ref-v2.json"
     if not dest.exists():
@@ -120,7 +155,9 @@ def main() -> int:
     spec = MODELS[args.tier]
 
     if args.check_only:
-        ok = check_model(out, args.tier) and check_reference(out)
+        ok = (check_model(out, args.tier)
+              and check_manifest(out, args.tier)
+              and check_reference(out))
         return 0 if ok else 1
 
     dest = out / f"model-{args.tier}.onnx"
@@ -129,6 +166,14 @@ def main() -> int:
         print(f"Downloading {url} ...")
         download(url, dest)
         if not check_model(out, args.tier):
+            return 1
+
+    manifest = out / f"manifest-{args.tier}.json"
+    if not (manifest.exists() and check_manifest(out, args.tier)):
+        url = f"{BASE}/models/{spec['id']}/{spec['version']}/manifest.json"
+        print(f"Downloading {url} ...")
+        download(url, manifest)
+        if not check_manifest(out, args.tier):
             return 1
 
     ref = out / "ref-v2.json"
