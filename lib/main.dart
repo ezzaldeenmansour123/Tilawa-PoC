@@ -3,7 +3,7 @@
 // Standalone experiment app. Three tabs: Recitation, Model, Logs.
 // No accounts, no ads, no analytics, no uploads. Audio never leaves the device.
 
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 
 import 'model_manager.dart';
 import 'screens/logs_screen.dart';
