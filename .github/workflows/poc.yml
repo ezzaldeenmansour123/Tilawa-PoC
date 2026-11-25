@@ -34,9 +34,13 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
-      - name: Download lite model + reference (SHA-verified)
+      - name: Download lite + full models + reference (SHA-verified)
         run: |
           python3 tools/download_assets.py --tier lite --out /tmp/poc-models
+          # FULL model too (67.8 MB in CI is acceptable): the ONNX I/O
+          # check below must verify BOTH tiers independently — a lite-only
+          # check can never catch a full-model I/O mismatch.
+          python3 tools/download_assets.py --tier full --out /tmp/poc-models
           python3 tools/check_ref_schema.py /tmp/poc-models/ref-v2.json
           # Lay the files out exactly like the tilawa.dev hosting layout.
           # loadNodeModel(dir) reads dir/manifest.json and then loads
@@ -44,9 +48,11 @@ jobs:
           # directory itself (models/<id>/<version>), NOT the host root:
           # the host root has no manifest.json, which is why run #2 failed
           # with ENOENT on /tmp/poc-host/manifest.json.
-          mkdir -p /tmp/poc-host/models/spliced-clean-lite/1-int8 /tmp/poc-host/reference
+          mkdir -p /tmp/poc-host/models/spliced-clean-lite/1-int8 /tmp/poc-host/models/spliced-clean/1-int8 /tmp/poc-host/reference
           cp /tmp/poc-models/model-lite.onnx /tmp/poc-host/models/spliced-clean-lite/1-int8/model.onnx
           cp /tmp/poc-models/manifest-lite.json /tmp/poc-host/models/spliced-clean-lite/1-int8/manifest.json
+          cp /tmp/poc-models/model-full.onnx /tmp/poc-host/models/spliced-clean/1-int8/model.onnx
+          cp /tmp/poc-models/manifest-full.json /tmp/poc-host/models/spliced-clean/1-int8/manifest.json
           cp /tmp/poc-models/ref-v2.json /tmp/poc-host/reference/ref-v2.json
       - name: Install engine + runtime
         run: |
@@ -79,6 +85,28 @@ jobs:
             if (!events.includes('capabilities')) throw new Error('no capabilities event');
             console.log('NODE SMOKE OK');
           "
+        working-directory: web
+
+      # ONNX I/O verification (2026-11-26, user directive): model-load
+      # success is NOT proof tasmee' works. web/check_onnx_io.mjs creates
+      # a REAL onnxruntime-node InferenceSession per tier and checks the
+      # session's input/output names, dtypes and shapes against exactly
+      # what @tilawa/core feeds and reads (x [1,45,80] + manifest states
+      # in, log_probs + new_* states out), then runs the web warmup probe.
+      # Runs for BOTH tiers independently; any mismatch fails the job.
+      # DEV ENVIRONMENT ONLY: a pass here answers "does the session
+      # create and does the I/O match" — it NEVER proves tasmee' works on
+      # the phone (that is the separate on-device phone protocol).
+      - name: ONNX I/O check (both tiers)
+        run: |
+          node check_onnx_io.mjs \
+            --model /tmp/poc-host/models/spliced-clean-lite/1-int8/model.onnx \
+            --manifest /tmp/poc-host/models/spliced-clean-lite/1-int8/manifest.json \
+            --tier lite
+          node check_onnx_io.mjs \
+            --model /tmp/poc-host/models/spliced-clean/1-int8/model.onnx \
+            --manifest /tmp/poc-host/models/spliced-clean/1-int8/manifest.json \
+            --tier full
         working-directory: web
 
   build:
