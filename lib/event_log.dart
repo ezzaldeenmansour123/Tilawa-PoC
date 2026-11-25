@@ -88,10 +88,19 @@ class LogMetrics {
   static List<int> highlightLatenciesMs(
     List<Map<String, dynamic>> events,
   ) {
-    final meta = events.firstWhere(
-      (e) => e['type'] == 'meta',
-      orElse: () => {},
-    );
+    // NOTE: a plain firstWhere(orElse: () => {}) fails at RUNTIME here:
+    // the caller's list literal infers Map<String, Object> elements, so the
+    // reified orElse type must be () => Map<String, Object> — a plain {}
+    // literal is Map<String, dynamic> and is rejected. An explicit loop
+    // has no such trap.
+    Map<String, dynamic>? meta;
+    for (final e in events) {
+      if (e['type'] == 'meta') {
+        meta = e;
+        break;
+      }
+    }
+    if (meta == null) return [];
     final startWall =
         (meta['payload']?['sessionStartedWallMs'] as num?)?.toInt();
     if (startWall == null) return [];
