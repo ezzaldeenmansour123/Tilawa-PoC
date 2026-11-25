@@ -27,6 +27,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:webview_flutter/webview_flutter.dart';
 
 import 'event_log.dart';
@@ -67,12 +68,29 @@ class WebViewEngine implements SpeechEngine {
 
   Map<int, int>? _ayahCounts;
 
+  /// Model-load timeout. 60 s, not the old 120 s (ported from Pro,
+  /// Phase 2 item 2.2): the model + WASM come from the localhost server,
+  /// so a healthy load takes seconds; waiting 120 s in silence was the
+  /// poc-12 phone experience. The timeout error names the last completed
+  /// stage, so a repeat failure is diagnosable.
+  static const kModelLoadTimeout = Duration(seconds: 60);
+
   @override
   Future<EngineCapabilities> load({
     required String tier,
     void Function(double fraction)? onProgress,
+    void Function(String stageLabel)? onStage,
   }) async {
     _tier = tier;
+    // Last completed stage (Arabic label), shown in the timeout error so
+    // a hang is never silent again: the UI mirrors it live via onStage.
+    var stage = 'جارٍ فحص النموذج…';
+    void setStage(String label) {
+      stage = label;
+      onStage?.call(label);
+    }
+
+    setStage('جارٍ فحص النموذج…');
     final info = await modelManager.status(tier);
     if (info.status != ModelStatus.ready) {
       throw SpeechEngineException(
@@ -88,6 +106,7 @@ class WebViewEngine implements SpeechEngine {
     }
     // Load the reference words for the passage display (from the engine's
     // own ref-v2.json — never invented text).
+    setStage('جارٍ قراءة المرجع…');
     final refText = await modelManager.referenceFile.readAsString();
     final ref = jsonDecode(refText) as Map<String, dynamic>;
     final ayahs = ref['ayahs'] as List;
@@ -111,6 +130,7 @@ class WebViewEngine implements SpeechEngine {
     _server ??= await LocalServer.start(
       Directory(modelManager.referenceFile.parent.path),
     );
+    setStage('جارٍ تحميل صفحة المحرك…');
     _controller ??= WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
       ..setNavigationDelegate(
@@ -122,8 +142,23 @@ class WebViewEngine implements SpeechEngine {
               _pageLoaded!.complete();
             }
           },
+          // Permanent diagnostics (TASMEE Phase 2, item 2.3): failed
+          // subresources are otherwise invisible from Dart — surface
+          // them in logcat so the next bundle/WASM failure leaves a
+          // trace instead of silence.
+          onWebResourceError: (error) {
+            debugPrint('[WebView resource error] ${error.errorType} '
+                '(${error.errorCode}): ${error.description}');
+          },
         ),
       )
+      // Console messages live on the controller, not the delegate, in
+      // webview_flutter 4.x — same diagnostic purpose: JS console
+      // output (incl. the bridge's own fallback logs) reaches logcat.
+      ..setOnConsoleMessage((message) {
+        debugPrint(
+            '[WebView console:${message.level.name}] ${message.message}');
+      })
       ..addJavaScriptChannel(
         'TilawaBridge',
         onMessageReceived: _onBridgeMessage,
@@ -139,6 +174,49 @@ class WebViewEngine implements SpeechEngine {
       onTimeout: () =>
           throw SpeechEngineException('انتهت مهلة تحميل صفحة المحرك'),
     );
+    // PRE-FLIGHT (ported from Pro, Phase 2 item 2.2 — added there after
+    // the poc-12 phone failure). The 30 s page timeout above proves
+    // tilawa.html arrived, but it says NOTHING about the subresources
+    // init() needs: onPageFinished fires even when bundle.js or the WASM
+    // files 404, and the disk-side checks (status/ortWasmReady) cannot
+    // see a broken server mapping — the /ort/ path bug passed every gate
+    // and then hung init silently. So, before calling init, fetch each
+    // served file over HTTP and demand 200 + non-empty, and verify the
+    // bridge object exists.
+    setStage('جارٍ التحقق من حزمة المحرك (bundle.js)…');
+    await _checkServed(
+      '${_server!.baseUrl}bundle.js',
+      'حزمة المحرك (bundle.js)',
+    );
+    setStage('جارٍ التحقق من ملفات التشغيل عبر الخادم المحلي…');
+    for (final name in kOrtWasmFiles) {
+      await _checkServed(
+        '${_server!.baseUrl}ort/$kOrtWebVersion/$name',
+        'ملف التشغيل $name',
+      );
+    }
+    setStage('جارٍ التحقق من جسر المحرك…');
+    var bridgeFound = false;
+    for (var attempt = 0; attempt < 5; attempt++) {
+      final bridge = await _controller!.runJavaScriptReturningResult(
+        "typeof window.TilawaPoc !== 'undefined' && "
+        "typeof window.TilawaPoc.init === 'function' ? 'yes' : 'no'",
+      );
+      if (bridge.toString().contains('yes')) {
+        bridgeFound = true;
+        break;
+      }
+      // Race guard (Phase 1 §2.5, hypothesis 3): onPageFinished can fire
+      // before the bundle finished evaluating; retry briefly before
+      // declaring the bridge missing.
+      await Future<void>.delayed(const Duration(milliseconds: 400));
+    }
+    if (!bridgeFound) {
+      throw SpeechEngineException(
+          'جسر المحرك غير موجود في الصفحة — حزمة المحرك (bundle.js) لم '
+          'تُحمَّل. أعد بناء الحزمة أو أعد تشغيل التطبيق.');
+    }
+    setStage('جارٍ تحميل النموذج داخل المحرك…');
     final completer = Completer<EngineCapabilities>();
     _loadCompleter = completer;
     await _controller!.runJavaScript(
@@ -151,10 +229,47 @@ class WebViewEngine implements SpeechEngine {
       })});',
     );
     return completer.future.timeout(
-      const Duration(seconds: 120),
+      kModelLoadTimeout,
       onTimeout: () => throw SpeechEngineException(
-          'انتهت مهلة تحميل النموذج (120 ثانية)'),
+          'انتهت مهلة تحميل النموذج (${kModelLoadTimeout.inSeconds} ثانية) — '
+          'توقف عند مرحلة: $stage. إن تكرر ذلك، تحقق من تبويب «النموذج» '
+          '(النموذج مثبَّت + ملفات التشغيل موجودة)، ثم أعد المحاولة.'),
     );
+  }
+
+  /// Fetches one file the engine needs from the localhost server and
+  /// demands HTTP 200 + a non-empty body. The disk-side checks cannot do
+  /// this: a file can exist on disk yet be unservable (wrong server path),
+  /// which is exactly what hung poc-12. Throws [SpeechEngineException]
+  /// with an actionable message instead of letting init hang.
+  Future<void> _checkServed(String url, String label) async {
+    final client = HttpClient();
+    try {
+      final req = await client
+          .getUrl(Uri.parse(url))
+          .timeout(const Duration(seconds: 10));
+      final res = await req.close().timeout(const Duration(seconds: 10));
+      if (res.statusCode != 200) {
+        throw SpeechEngineException(
+            '$label غير متاح من الخادم المحلي (HTTP ${res.statusCode}) — '
+            'أعد تشغيل التطبيق، وإن تكرر أعد تنزيل النموذج.');
+      }
+      var bytes = 0;
+      await for (final chunk in res) {
+        bytes += chunk.length;
+      }
+      if (bytes == 0) {
+        throw SpeechEngineException(
+            '$label وصل فارغاً من الخادم المحلي — أعد المحاولة.');
+      }
+    } on SpeechEngineException {
+      rethrow;
+    } on TimeoutException {
+      throw SpeechEngineException(
+          'انتهت مهلة الوصول إلى $label من الخادم المحلي — الخادم لا يرد.');
+    } finally {
+      client.close();
+    }
   }
 
   Completer<EngineCapabilities>? _loadCompleter;
@@ -164,6 +279,30 @@ class WebViewEngine implements SpeechEngine {
     final data = jsonDecode(message.message) as Map<String, dynamic>;
     final type = data['type'] as String?;
     switch (type) {
+      case 'page-loaded':
+        // Informational only (Phase 1 §2.5): the page arrived, but this
+        // says nothing about bundle.js — the pre-flight + bridge check
+        // in load() are the real gates.
+        debugPrint('[WebViewEngine] page-loaded');
+      case 'bundle-load-error':
+        // tilawa.html's onerror on the bundle.js <script> tag (Phase 2,
+        // item 2.3): the bundle never arrived (404/500), so the bridge
+        // cannot exist. Fail the pending load loudly with the layer named.
+        _failLoad(SpeechEngineException(
+          (data['message'] ?? 'فشل تحميل حزمة المحرك (bundle.js)')
+              as String,
+          reason: 'bundle-load-error',
+        ));
+      case 'js-error':
+        // Eval-time exception inside bundle.js, forwarded by the
+        // window.onerror handler in tilawa.html — it only fires while
+        // window.TilawaPoc is still undefined, i.e. before the bridge
+        // exists (Phase 1 §2.2: the strongest poc-14 hypothesis).
+        _failLoad(SpeechEngineException(
+          (data['message'] ?? 'خطأ أثناء تقييم حزمة المحرك (bundle.js)')
+              as String,
+          reason: 'bundle-eval-error',
+        ));
       case 'ready':
         final caps = EngineCapabilities.fromJson(
           (data['capabilities'] as Map).cast<String, dynamic>(),
@@ -179,12 +318,7 @@ class WebViewEngine implements SpeechEngine {
           (data['message'] ?? 'خطأ من المحرك') as String,
           reason: data['reason'] as String?,
         );
-        if (_loadCompleter != null) {
-          _loadCompleter!.completeError(err);
-          _loadCompleter = null;
-        } else {
-          _events.addError(err);
-        }
+        _failLoad(err);
       case 'position':
         final payload = (data['event'] as Map).cast<String, dynamic>();
         final ev = _parsePosition(payload);
@@ -204,6 +338,19 @@ class WebViewEngine implements SpeechEngine {
           'crossOriginIsolated': data['crossOriginIsolated'],
           'threads': data['threads'],
         }, audioMs: null);
+    }
+  }
+
+  /// Fails the pending load (if any) with [err]; otherwise forwards it
+  /// to the session event stream. Shared by the 'error',
+  /// 'bundle-load-error' and 'js-error' bridge messages so a bundle
+  /// failure is never swallowed silently.
+  void _failLoad(SpeechEngineException err) {
+    if (_loadCompleter != null) {
+      _loadCompleter!.completeError(err);
+      _loadCompleter = null;
+    } else {
+      _events.addError(err);
     }
   }
 
