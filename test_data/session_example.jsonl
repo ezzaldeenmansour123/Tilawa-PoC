@@ -1,0 +1,13 @@
+{"seq": 0, "wallMs": 1000000, "audioMs": null, "type": "meta", "payload": {"sessionStartedWallMs": 1000000, "preset": "synthetic", "mode": "memorization", "tier": "lite", "backend": "wasm"}}
+{"seq": 1, "wallMs": 1000800, "audioMs": 0, "type": "position", "payload": {"timeMs": 0, "observed": [{"word": {"surah": 1, "ayah": 1, "word": 1}, "confidence": 0.9}], "state": "locked"}}
+{"seq": 2, "wallMs": 1002100, "audioMs": 900, "type": "position", "payload": {"timeMs": 900, "observed": [{"word": {"surah": 1, "ayah": 1, "word": 2}, "confidence": 0.85}], "state": "locked"}}
+{"seq": 3, "wallMs": 1003300, "audioMs": 2100, "type": "position", "payload": {"timeMs": 2100, "observed": [{"word": {"surah": 1, "ayah": 2, "word": 2}, "confidence": 0.8}], "state": "locked"}}
+{"seq": 4, "wallMs": 1004000, "audioMs": 3000, "type": "checker", "payload": {"id": "c1", "timeMs": 3000, "state": "suspected", "errorClass": "omitted_word", "location": {"surah": 1, "ayah": 2, "word": 3}}}
+{"seq": 5, "wallMs": 1006200, "audioMs": 5200, "type": "checker", "payload": {"id": "c1", "timeMs": 5200, "state": "confirmed", "errorClass": "omitted_word", "location": {"surah": 1, "ayah": 2, "word": 3}}}
+{"seq": 6, "wallMs": 1007000, "audioMs": 6000, "type": "checker", "payload": {"id": "c2", "timeMs": 6000, "state": "suspected", "errorClass": "wrong_word", "location": {"surah": 1, "ayah": 3, "word": 1}}}
+{"seq": 7, "wallMs": 1007500, "audioMs": 6500, "type": "checker", "payload": {"id": "c2", "timeMs": 6500, "state": "confirmed", "errorClass": "wrong_word", "location": {"surah": 1, "ayah": 3, "word": 1}}}
+{"seq": 8, "wallMs": 1008000, "audioMs": 7000, "type": "checker", "payload": {"id": "c3", "timeMs": 7000, "state": "suspected", "errorClass": "wrong_word", "location": {"surah": 1, "ayah": 5, "word": 1}}}
+{"seq": 9, "wallMs": 1009000, "audioMs": 8000, "type": "checker", "payload": {"id": "c3", "timeMs": 8000, "state": "confirmed", "errorClass": "wrong_word", "location": {"surah": 1, "ayah": 5, "word": 1}}}
+{"seq": 10, "wallMs": 1010000, "audioMs": 9000, "type": "checker", "payload": {"id": "c4", "timeMs": 9000, "state": "uncertain", "errorClass": "wrong_word", "location": {"surah": 1, "ayah": 6, "word": 2}}}
+{"seq": 11, "wallMs": 1011000, "audioMs": 10000, "type": "checker", "payload": {"id": "c5", "timeMs": 10000, "state": "resolved", "errorClass": "added_word", "location": {"surah": 1, "ayah": 6, "word": 3}}}
+{"seq": 12, "wallMs": 1012000, "audioMs": 11000, "type": "position", "payload": {"timeMs": 11000, "observed": [{"word": {"surah": 1, "ayah": 7, "word": 1}, "confidence": 0.92}], "state": "locked"}}
