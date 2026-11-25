@@ -17,7 +17,22 @@
     <p class="muted">مساعد حفظ تجريبي — يكشف أخطاء الحفظ فقط، لا يقيّم التجويد أو النطق؛ حفص فقط؛ قد يخطئ؛ الصوت لا يغادر جهازك.</p>
     <p class="muted" id="detail">يُقدَّم هذا الصفحة من خادم محلي (http://127.0.0.1) داخل التطبيق — السياق الآمن المطلوب للميكروفون.</p>
   </div>
-  <script src="/bundle.js"></script>
+  <script>
+    // Permanent diagnostics (TASMEE Phase 2, item 2.3): if bundle.js
+    // throws while being evaluated, window.TilawaPoc is never defined
+    // and Dart hears nothing (Phase 1 §2.2 — the strongest poc-14
+    // hypothesis). This handler is registered BEFORE the bundle loads,
+    // so it can forward the first such error while the bridge is still
+    // undefined. Guarded: diagnostics must never break the page.
+    window.addEventListener('error', function (e) {
+      try {
+        if (typeof window.TilawaPoc === 'undefined' && window.TilawaBridge) {
+          window.TilawaBridge.postMessage(JSON.stringify({ type: 'js-error', message: 'خطأ أثناء تقييم حزمة المحرك (bundle.js): ' + (e.message || 'خطأ غير معروف') }));
+        }
+      } catch (_) { /* never break the page from diagnostics */ }
+    });
+  </script>
+  <script src="/bundle.js" onerror="if(window.TilawaBridge){window.TilawaBridge.postMessage(JSON.stringify({type:'bundle-load-error',message:'فشل تحميل حزمة المحرك (bundle.js) من الخادم المحلي — تحقق من بناء الحزمة ثم أعد تشغيل التطبيق.'}));}document.getElementById('status').textContent='تعذّر تحميل حزمة المحرك (bundle.js).';"></script>
   <script>
     // The Dart side calls window.TilawaPoc.init(...) after load.
     // This page intentionally shows almost nothing: the Flutter UI is the
