@@ -68,25 +68,27 @@ const kReferenceFile = 'ref-v2.json';
 
 /// WASM files of onnxruntime-web, self-hosted. The version MUST match the
 /// version the web bundle was built against (see web/package.json).
-/// The upstream README lists 1.30.0 as the hosted version at writing time.
 /// tools/download_assets.py downloads the same version from the jsDelivr CDN
 /// mirror of the onnxruntime-web npm package — never from tilawa.dev at
 /// runtime (the PoC must not depend on tilawa.dev after first install).
 ///
-/// CRITICAL (fixed 2026-11-25, pre-build review): these files must ALSO be
-/// downloaded by the app at first install (see download() below). The CI
-/// copy in assets/models/ort/ is NOT bundled into the APK (pubspec.yaml
-/// does not list assets/models/), and the localhost server serves /ort/*
-/// from the app-support model directory — so without this download the
-/// WebView would request the .wasm files, get 404, and loadWebModel would
-/// fail before any session could start. Same 4 files as
-/// tools/download_assets.py ORT_WASM_FILES — keep both lists in sync.
+/// VERIFIED 2026-11-25 against the live jsDelivr listing: onnxruntime-web
+/// 1.30.0 (and every version back to 1.19.0) ships ONLY simd-threaded
+/// builds — there is NO ort-wasm-simd.wasm / ort-wasm.wasm any more, so the
+/// old 4-file list 404'd on the phone (poc-9). The threaded build needs
+/// SharedArrayBuffer, which needs cross-origin isolation — LocalServer
+/// therefore sends COOP: same-origin + COEP: require-corp on every
+/// response (see lib/local_server.dart). If the WebView still reports
+/// crossOriginIsolated == false, the engine cannot load and the PoC must
+/// record that as a NO-GO data point (do NOT silently fall back).
+/// The .mjs is the Emscripten loader glue the runtime fetches from
+/// wasmPaths alongside the .wasm; both files are required.
+/// Same 2 files as tools/download_assets.py ORT_WASM_FILES — keep both
+/// lists in sync.
 const kOrtWebVersion = '1.30.0';
 const kOrtWasmFiles = [
+  'ort-wasm-simd-threaded.mjs',
   'ort-wasm-simd-threaded.wasm',
-  'ort-wasm-simd.wasm',
-  'ort-wasm-threaded.wasm',
-  'ort-wasm.wasm',
 ];
 const kOrtBaseUrl =
     'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.30.0/dist';
@@ -111,10 +113,10 @@ class ModelManager {
 
   Directory get ortDir => Directory('${_dir.path}/ort/$kOrtWebVersion');
 
-  /// True only when all 4 onnxruntime-web WASM files are present and
-  /// non-empty in <modelDir>/ort/<version>/ (where LocalServer serves
-  /// them from). Checked before load() so a missing runtime fails loudly
-  /// with an actionable message instead of a cryptic bridge error.
+  /// True only when the onnxruntime-web files the 1.30.0 loader needs are
+  /// present and non-empty in <modelDir>/ort/<version>/ (where LocalServer
+  /// serves them from). Checked before load() so a missing runtime fails
+  /// loudly with an actionable message instead of a cryptic bridge error.
   Future<bool> ortWasmReady() async {
     for (final name in kOrtWasmFiles) {
       final f = File('${ortDir.path}/$name');
