@@ -115,6 +115,12 @@ jobs:
       - name: Create Android project files
         run: |
           flutter create --platforms=android --org com.tilawa.app --project-name tilawa_poc .
+          # flutter create generates a default test/widget_test.dart that
+          # references a MyApp class this project does not have (and imports
+          # material_ui without it being a dependency) — it breaks
+          # `flutter analyze` (run #3). This PoC's tests live in
+          # test/event_log_test.dart; delete the generated file.
+          rm -f test/widget_test.dart
           python3 - <<'PY'
           from pathlib import Path
           p = Path('android/app/src/main/AndroidManifest.xml')
