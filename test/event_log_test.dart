@@ -4,6 +4,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:tilawa_poc/event_log.dart';
 import 'package:tilawa_poc/models.dart';
+import 'package:tilawa_poc/speech_engine.dart';
 
 void main() {
   group('LogMetrics.highlightLatenciesMs', () {
