@@ -58,7 +58,7 @@ jobs:
         run: |
           node --input-type=module -e "
             import { createTilawa, loadNodeModel } from '@tilawa/core/node';
-            const model = await loadNodeModel({ modelDir: '/tmp/poc-host' });
+            const model = await loadNodeModel('/tmp/poc-host');
             const tilawa = await createTilawa({ model });
             const session = tilawa.startFreeRecitation();
             const events = [];
