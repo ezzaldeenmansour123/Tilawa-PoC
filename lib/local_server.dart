@@ -13,6 +13,7 @@
 
 import 'dart:io';
 
+import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:flutter/services.dart' show rootBundle;
 
 class LocalServer {
@@ -65,6 +66,15 @@ class LocalServer {
     res.headers.add('Cross-Origin-Resource-Policy', 'same-origin');
   }
 
+  /// Permanent diagnostics (TASMEE Phase 2, item 2.3): every request is
+  /// logged with its path + status code, so a future failure in the
+  /// serve chain (bundle 404/500, WASM 404, eval error) is visible in
+  /// logcat instead of silent. Only the path and the status are logged —
+  /// never audio or query data.
+  static void _logRequest(HttpRequest req, int status) {
+    debugPrint('[LocalServer] ${req.method} ${req.uri.path} -> $status');
+  }
+
   Future<void> _handle(HttpRequest req) async {
     try {
       final path = req.uri.path;
@@ -77,18 +87,33 @@ class LocalServer {
       } else if (path.startsWith('/ort/')) {
         // onnxruntime-web WASM files, downloaded by tools/download_assets.py
         // into <modelDir>/ort/<version>/.
-        await _serveFile(req, File('${_modelDir.path}${path.substring(1)}'));
+        //
+        // FIXED 2026-11-25 (Phase 2, item 2.2; the poc-12 phone failure —
+        // the engine never became ready, 120 s timeout, no error): the
+        // old code built File('${_modelDir.path}${path.substring(1)}'),
+        // i.e. "<dir>ort/1.30.0/..." with the '/' missing, so EVERY /ort/
+        // request 404'd while the disk-side check
+        // (ModelManager.ortWasmReady) passed. `path` already starts with
+        // '/', so the model dir + path is the correct on-disk file —
+        // note this is NOT the /models/ pattern (substring(8) strips
+        // "/models/" because that prefix is not part of the disk
+        // layout, while "ort/" IS: the files live in <dir>/ort/<ver>/).
+        await _serveFile(req, File('${_modelDir.path}$path'));
       } else {
+        _isolationHeaders(req.response);
         req.response
           ..statusCode = HttpStatus.notFound
           ..write('not found');
         await req.response.close();
+        _logRequest(req, HttpStatus.notFound);
       }
     } catch (e) {
+      _isolationHeaders(req.response);
       req.response
         ..statusCode = HttpStatus.internalServerError
         ..write('server error: $e');
       await req.response.close();
+      _logRequest(req, HttpStatus.internalServerError);
     }
   }
 
@@ -98,17 +123,24 @@ class LocalServer {
     req.response.headers.contentType =
         ContentType.parse(_mime[ext] ?? 'application/octet-stream');
     req.response.headers.add('Cache-Control', 'no-store');
+    req.response.headers.contentLength = data.lengthInBytes;
     _isolationHeaders(req.response);
     req.response.add(data.buffer.asUint8List(data.offsetInBytes, data.lengthInBytes));
     await req.response.close();
+    _logRequest(req, HttpStatus.ok);
   }
 
   Future<void> _serveFile(HttpRequest req, File file) async {
     if (!await file.exists()) {
+      // Isolation headers here too: under COEP require-corp a header-less
+      // 404 subresource is blocked by the browser instead of arriving as
+      // a clean 404, which would mask the real error from the loader.
+      _isolationHeaders(req.response);
       req.response
         ..statusCode = HttpStatus.notFound
         ..write('model file not found');
       await req.response.close();
+      _logRequest(req, HttpStatus.notFound);
       return;
     }
     final ext = file.path.substring(file.path.lastIndexOf('.'));
@@ -119,5 +151,6 @@ class LocalServer {
     req.response.headers.contentLength = await file.length();
     await req.response.addStream(file.openRead());
     await req.response.close();
+    _logRequest(req, HttpStatus.ok);
   }
 }
