@@ -51,10 +51,18 @@ window.TilawaPoc = {
       // offline path; createTilawa with a loaded model does not hit the
       // network at all.
       const reference = await (await fetch(opts.referenceUrl)).json();
+      // poc-10: onnxruntime-web >= 1.19 ships ONLY threaded WASM builds
+      // (ort-wasm-simd-threaded.wasm); the single-threaded files do not
+      // exist, which 404ed poc-9. The localhost server now sends COOP+COEP
+      // (see lib/local_server.dart), so the page IS cross-origin isolated
+      // and SharedArrayBuffer works — request threads > 1 so the loader
+      // uses the threaded build that actually exists.
+      const threads = Math.max(2, Math.min(4, navigator.hardwareConcurrency || 4));
       const model = await loadWebModel({
         model: opts.modelUrl,
         reference,
         wasmPaths: opts.wasmPaths,
+        threads,
       });
       tilawa = await createTilawa({ model, reference });
       const ms = Math.round(performance.now() - t0);
@@ -63,7 +71,7 @@ window.TilawaPoc = {
       // probe session is NOT possible (a session is a take), so the backend
       // is reported from the first real session's capabilities event, and
       // the load time is reported here.
-      post({ type: 'modelLoadMs', ms, backend: 'unknown-yet' });
+      post({ type: 'modelLoadMs', ms, backend: 'unknown-yet', crossOriginIsolated: globalThis.crossOriginIsolated, threads });
       // Report readiness: the capabilities payload comes with the first
       // session; here we report the model identity from the registry data
       // the bridge already knows (tier + urls), so Dart can show the card.
