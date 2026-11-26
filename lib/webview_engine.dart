@@ -140,7 +140,6 @@ class WebViewEngine implements SpeechEngine {
   // silent drop and never unbounded memory. The pump chain is strictly
   // ordered, so frames can never overtake each other into the engine.
   final _mic = NativeMicRecorder();
-  int _pcmSequence = 0;
   int _unackedPcm = 0;
   int _pumpQueued = 0;
   Future<void> _pump = Future<void>.value();
@@ -735,7 +734,6 @@ class WebViewEngine implements SpeechEngine {
           'toAyah': passage?.toAyah,
         })});',
       );
-      _pcmSequence = 0;
       _unackedPcm = 0;
       _pumpQueued = 0;
       _pcmFailureReported = false;
