@@ -9,7 +9,8 @@
 //     during evaluation dies BEFORE `window.TilawaPoc` is defined, and
 //     `test -s` / `node --check` can never catch that);
 //   - after evaluation, `window.TilawaPoc` is an object exposing the four
-//     bridge methods Dart calls: init, startSession, stopSession, dispose.
+//     bridge methods Dart calls: init, startSession, pushPcm, stopSession,
+//     dispose, probeEnvironment.
 //   - the pre-load environment probe (`TilawaPoc.probeEnvironment()`)
 //     runs without throwing and returns the expected shape
 //     (crossOriginIsolated, SharedArrayBuffer typeof + live probe,
@@ -34,7 +35,7 @@ import { statSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 const GLOBAL_NAME = 'TilawaPoc';
-const EXPECTED_METHODS = ['init', 'startSession', 'stopSession', 'dispose', 'probeEnvironment'];
+const EXPECTED_METHODS = ['init', 'startSession', 'pushPcm', 'stopSession', 'dispose', 'probeEnvironment'];
 
 const bundlePath = process.argv[2]
   ? process.argv[2]

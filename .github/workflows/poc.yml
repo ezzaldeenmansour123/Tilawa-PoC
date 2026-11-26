@@ -240,6 +240,18 @@ jobs:
           t = t.replace('</manifest>', perms + '</manifest>')
           p.write_text(t, encoding='utf-8')
           print('manifest OK')
+          # `record` (native mic capture) needs minSdk 23 (its README);
+          # the flutter-create template defaults to flutter.minSdkVersion
+          # (21). Bump it so the Gradle build does not fail on the
+          # manifest merger ("uses-sdk:minSdkVersion 21 cannot be
+          # smaller than version 23").
+          import re
+          g = Path('android/app/build.gradle.kts')
+          gt = g.read_text(encoding='utf-8')
+          gt, _min_sdk_n = re.subn(r'minSdk = .*', 'minSdk = 23', gt, count=1)
+          assert _min_sdk_n == 1, 'minSdk line not found in build.gradle.kts'
+          g.write_text(gt, encoding='utf-8')
+          print('minSdk set to 23 (record plugin)')
           PY
 
       - name: Get dependencies
