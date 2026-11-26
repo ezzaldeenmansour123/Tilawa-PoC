@@ -17,6 +17,10 @@ dependencies:
   # WebView hosting @tilawa/core/web. Version range is deliberately broad:
   # CI resolves the latest 4.x; pin it in pubspec.lock at first green build.
   webview_flutter: ^4.0.0
+  # منح إذن الميكروفون داخل WebView (إصلاح 2026-11-26): إذن التطبيق
+  # وحده لا يكفي — الصفحة تطلب الإذن عبر WebChromeClient ويجب منحه
+  # من الكود عبر setOnPlatformPermissionRequest.
+  webview_flutter_android: ^4.14.1
   path_provider: ^2.1.5
   crypto: ^3.0.6
   share_plus: ^10.1.4
